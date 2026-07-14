@@ -29,6 +29,15 @@ Your personality:
 - Clear and concise in your replies
 - No emojies
 
+Never make refund decisions yourself.
+
+If a refund request is made:
+
+1. Call get_order_details.
+2. Call get_refund_history.
+3. Then call escalate_to_manager.
+Do not answer until the manager responds.
+
 Important rules:
 - Always check order details first before responding
 - Never approve or deny a refund yourself
@@ -51,6 +60,7 @@ Your decision options:
 - Approve refund — if the case is genuine and within policy
 - Deny refund — if the case is suspicious or outside policy
 - Escalate to risk team — if you suspect fraud
+- Before making any refund decision, Always call assess_fraud_risk, Never skip this tool
 
 Important rules:
 - Be fair but firm
@@ -209,7 +219,7 @@ GEMINI_RISK_TOOLS = [
 
 
 # EXECUTE TOOL --> Bridge between gemini and python function (tools)
-def execute_tool(tool_name, tool_input):
+def execute_tool(tool_name, tool_input, conversation_id):
     if tool_name == "get_order_details":
         return get_order_details(tool_input["order_id"])
     
@@ -222,7 +232,7 @@ def execute_tool(tool_name, tool_input):
     if tool_name == "escalate_to_manager":
         case_summary = tool_input["case_summary"]
         print("escalating to manager ====>", case_summary)
-        decision = run_manager_agent(case_summary)
+        decision = run_manager_agent(case_summary, conversation_id)
         print("decision ====>", decision)
         return decision 
     
@@ -230,7 +240,7 @@ def execute_tool(tool_name, tool_input):
     if tool_name == 'assess_fraud_risk':
         user_id = tool_input['user_id']
         print("Consulting risk agent for user==>", user_id)
-        verdict = run_risk_agent(user_id)
+        verdict = run_risk_agent(user_id, conversation_id)
         print("risk verdict==>", verdict)
         return verdict
     
@@ -296,11 +306,18 @@ Current User ID: {user_id}
 
             for call in response.function_calls:
 
+                # Log tool call
+                AgentLog.objects.create(conversation=conv,event_type="tool_call",message=f"Calling tool {call.name} with {call.args}")
+
                 print("tool_call ==>", call.name)
                 print("tool_input ==>", call.args)
 
                 # Execute Python tool
-                result = execute_tool(call.name, call.args)
+                result = execute_tool(call.name, call.args, conversation_id)
+
+
+                # Log tool result
+                AgentLog.objects.create(conversation=conv,event_type="tool_result",message=f"{call.name} returned: {str(result)[:200]}")
 
                 print("tool_result ==>", result)
 
@@ -329,12 +346,16 @@ Current User ID: {user_id}
             continue
 
         else:
+            # log final reply.
+            AgentLog.objects.create(conversation=conv,event_type="tool_result",message=response.text)         
 
             return response.text
         
 
-def run_manager_agent(case_summary):
+def run_manager_agent(case_summary, conversation_id):
 
+    conv = Conversation.objects.get(id=conversation_id)
+    AgentLog.objects.create(conversation=conv,event_type="manager",message=f"case received for review {case_summary[:200]}") 
     manager_messages = [
         types.Content(
             role="user",
@@ -361,11 +382,14 @@ def run_manager_agent(case_summary):
             tool_parts = []
 
             for call in response.function_calls:
+                
+                # log consulting risk agent
+                AgentLog.objects.create(conversation=conv,event_type="manager",message=f"Consulting risk agent for fraud assessment")
 
                 print("tool_call ==>", call.name)
                 print("tool_input ==>", call.args)
 
-                result = execute_tool(call.name, call.args)
+                result = execute_tool(call.name, call.args, conversation_id)
 
                 print("tool_result ==>", result)
 
@@ -393,12 +417,20 @@ def run_manager_agent(case_summary):
 
         else:
 
-            return response.text
+            decision = response.text
+             # log final reply.
+            AgentLog.objects.create(conversation=conv,event_type="tool_result",message=f"Decision: {decision}")
+
+            return decision
         
 
 
-def run_risk_agent(user_id):
+def run_risk_agent(user_id, conversation_id):
 
+    conv = Conversation.objects.get(id = conversation_id)
+
+    # log assessment started
+    AgentLog.objects.create(conversation=conv,event_type="risk",message=f"Starting fraud assessment for {user_id}")
     risk_messages = [
         types.Content(
             role="user",
@@ -428,10 +460,13 @@ def run_risk_agent(user_id):
 
             for call in response.function_calls:
 
+                AgentLog.objects.create(conversation=conv,event_type="risk",message=f"Calling {call.name} to get customer risk profile...")
+
+
                 print("risk_tool_call ==>", call.name)
                 print("risk_tool_input ==>", call.args)
 
-                result = execute_tool(call.name, call.args)
+                result = execute_tool(call.name, call.args, conversation_id)
 
                 print("risk_tool_result ==>", result)
 
@@ -460,4 +495,8 @@ def run_risk_agent(user_id):
             continue
 
         else:
-            return response.text
+
+            verdict = response.text
+            AgentLog.objects.create(conversation=conv,event_type="risk",message=f"verdict: {verdict[:200]}")
+
+            return verdict
