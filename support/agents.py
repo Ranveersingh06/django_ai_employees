@@ -1,6 +1,6 @@
 from google import genai
 from django.conf import settings
-from .tools import get_order_details,get_refund_history,check_delivery_status
+from .tools import get_order_details,get_refund_history,check_delivery_status,get_customer_risk_profile
 from .models import Conversation, Message, AgentLog
 from google.genai import types
 
@@ -57,6 +57,31 @@ Important rules:
 - Base decision on facts — not emotions
 - Always give a specific reason for your decision
 - Keep your response concise and professional
+"""
+
+RISK_SYSTEM_PROMPT = """
+You are a fraud risk analyst at CoolBreeze AC.
+A support manager has sent you a customer profile for risk assessment.
+
+Your job:
+- Analyse the customer's order and refund patterns
+- Identify suspicious behaviour
+- Return a clear risk verdict
+
+Risk levels:
+- LOW — genuine customer, normal behaviour
+- MEDIUM — some suspicious signals, proceed with caution
+- HIGH — clear fraud pattern, recommend denial
+
+Your response format:
+- Risk Level: LOW / MEDIUM / HIGH
+- Key Signals: what you found suspicious or genuine
+- Recommendation: what manager should do
+
+Important:
+- Be objective — base verdict on data only
+- One bad refund does not make someone fraudulent
+- Look for patterns — not isolated incidents
 """
 
 
@@ -138,6 +163,50 @@ GEMINI_SUPPORT_TOOLS = [
 ]
 
 
+GEMINI_MANAGER_TOOLS = [
+    types.Tool(
+        function_declarations=[
+            types.FunctionDeclaration(
+                name="assess_fraud_risk",
+                description="Consult the risk agent to assess fraud risk for a customer. Use this when refund request looks suspicious or customer has multiple refund requests. Pass the user_id to get a risk verdict.",
+                parameters={
+                    "type": "OBJECT",
+                    "properties": {
+                        "user_id": {
+                            "type": "INTEGER",
+                            "description": "The user ID to assess fraud risk for"
+                        }
+                    },
+                    "required": ["user_id"]
+                },
+            ),
+        ]
+    )
+]
+
+
+GEMINI_RISK_TOOLS = [
+    types.Tool(
+        function_declarations=[
+            types.FunctionDeclaration(
+                name="get_customer_risk_profile",
+                description="Get complete risk profile for a customer including order history, refund patterns and ratio. Use this to assess fraud risk.",
+                parameters={
+                    "type": "OBJECT",
+                    "properties": {
+                        "user_id": {
+                            "type": "INTEGER",
+                            "description": "The user ID to assess risk for"
+                        }
+                    },
+                    "required": ["user_id"]
+                },
+            ),
+        ]
+    )
+]
+
+
 
 # EXECUTE TOOL --> Bridge between gemini and python function (tools)
 def execute_tool(tool_name, tool_input):
@@ -156,6 +225,17 @@ def execute_tool(tool_name, tool_input):
         decision = run_manager_agent(case_summary)
         print("decision ====>", decision)
         return decision 
+    
+
+    if tool_name == 'assess_fraud_risk':
+        user_id = tool_input['user_id']
+        print("Consulting risk agent for user==>", user_id)
+        verdict = run_risk_agent(user_id)
+        print("risk verdict==>", verdict)
+        return verdict
+    
+    if tool_name == 'get_customer_risk_profile':
+        return get_customer_risk_profile(tool_input['user_id'])
 
 
 
@@ -216,13 +296,13 @@ Current User ID: {user_id}
 
             for call in response.function_calls:
 
-                # print("tool_call ==>", call.name)
-                # print("tool_input ==>", call.args)
+                print("tool_call ==>", call.name)
+                print("tool_input ==>", call.args)
 
                 # Execute Python tool
                 result = execute_tool(call.name, call.args)
 
-               # print("tool_result ==>", result)
+                print("tool_result ==>", result)
 
                 tool_parts.append(
                     types.Part.from_function_response(
@@ -271,7 +351,7 @@ def run_manager_agent(case_summary):
             contents=manager_messages,
             config=types.GenerateContentConfig(
                 system_instruction=MANAGER_SYSTEM_PROMPT,
-                tools=GEMINI_SUPPORT_TOOLS,
+                tools=GEMINI_MANAGER_TOOLS,
                 max_output_tokens=1024,
             ),
         )
@@ -313,4 +393,71 @@ def run_manager_agent(case_summary):
 
         else:
 
+            return response.text
+        
+
+
+def run_risk_agent(user_id):
+
+    risk_messages = [
+        types.Content(
+            role="user",
+            parts=[
+                types.Part.from_text(
+                    text=f"Please assess the fraud risk for user ID {user_id}. Use your tool to get their profile and return a verdict."
+                )
+            ]
+        )
+    ]
+
+    while True:
+
+        response = client.models.generate_content(
+            model=gemini_model,
+            contents=risk_messages,
+            config=types.GenerateContentConfig(
+                system_instruction=RISK_SYSTEM_PROMPT,
+                tools=GEMINI_RISK_TOOLS,
+                max_output_tokens=1024,
+            ),
+        )
+
+        if response.function_calls:
+
+            tool_parts = []
+
+            for call in response.function_calls:
+
+                print("risk_tool_call ==>", call.name)
+                print("risk_tool_input ==>", call.args)
+
+                result = execute_tool(call.name, call.args)
+
+                print("risk_tool_result ==>", result)
+
+                tool_parts.append(
+                    types.Part.from_function_response(
+                        name=call.name,
+                        response={
+                            "result": result
+                        }
+                    )
+                )
+
+            # Add Gemini's function call message
+            risk_messages.append(
+                response.candidates[0].content
+            )
+
+            # Add tool response
+            risk_messages.append(
+                types.Content(
+                    role="tool",
+                    parts=tool_parts
+                )
+            )
+
+            continue
+
+        else:
             return response.text
