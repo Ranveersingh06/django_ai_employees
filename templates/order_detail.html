@@ -226,6 +226,7 @@
     .agent-message{
         background-color: #f3f4f6;
         border-radius: 0 10px 10px 10px;
+        white-space: pre-line;
     }
 
 
@@ -323,14 +324,31 @@
        <div id="chat-box" class = "card">
         <!-- Header -->
         <div class = "card-header d-flex align-item-center gap-2">
-            <div style = "width: 8px; height: 8px; boarder-radius: 80%; background-color: green;"></div>
+            <div style = "width: 8px; height: 8px; border-radius: 80%; background-color: green;"></div>
             <span class = "fw-semibold" style = "font-size: 13px;">Support Agent</span>
         </div>
         <!--Chat Area-->
         <div id = "chat-messages" class = "chat-messages p-3 d-flex flex-column gap-2">
+            {% if conversation %}
+            <!-- Print the previous messages -->
+             {% for msg in previous_messages %}
+              {% if msg.role == "user" %}
+                <div class="customer-messages p-2 px-3" style="font-size: 13px; max-width: 85%;">
+                  {{ msg.content}}
+                </div>
+              {% else %}
+                <div class="agent-message p-2 px-3" style="font-size: 13px; max-width: 85%;">
+                  {{ msg.content}}
+                </div>
+              {% endif %}
+
+             {% endfor %}
+
+            {% else %}
             <div class = "agent-message p-2 px-3" style = "font-size: 13px; max-width: 80%;">
-                Hi User, I'm maya, How can i help you with your order today?
-            </div> 
+                Hi {{ request.user.first_name }}, I'm maya, How can i help you with your order today?
+            </div>
+            {% endif %} 
         </div>
          <!--chat footer-->
         <div class = "card-footer">
@@ -352,6 +370,24 @@
 
 <script>
 
+
+    function showTyping(){
+      const messages = document.getElementById("chat-messages")
+      messages.insertAdjacentHTML("beforeend", `
+      <div id="typing-indicator" class="agent-message p-2" style="font-size:13px; max-width:85%;">
+        Typing...
+      </div>
+      `);
+      messages.scrollTop = messages.scrollHeight;
+    }
+
+    function hideTyping() {
+    const typing = document.getElementById("typing-indicator");
+    if (typing) {
+        typing.remove();
+    }
+}
+
     function showChat() {
     document.getElementById("help-card").style.display = "none";
 
@@ -371,10 +407,11 @@
         div.style.maxWidth = "80%";
         div.innerText = text;
         messages.appendChild(div);
+        messages.scrollTop = messages.scrollHeight;
     }
 
 
-    function sendMessage(){
+    async function sendMessage(){
         const input = document.getElementById("chat-input");
         const message = input.value.trim();
 
@@ -383,6 +420,41 @@
 
         appendMessage(message, "customer")
         input.value = "";
+        input.disabled = true;
+
+        const typingTimeout = setTimeout(()=> showTyping(), 1000); // typing indicator after 2 seconds. 
+
+        // send the message to django view.
+        try{
+          const response = await fetch("/support/chat/{{order.id}}/",{
+            method: "POST",
+            headers: {
+              "Content-Type":"application/json",
+              "X-CSRFToken":"{{ csrf_token }}",
+            },
+            body: JSON.stringify({message:message})
+
+          });
+          // console.log(response);
+
+          const data = await response.json()
+          // console.log(data);
+
+          hideTyping();
+          appendMessage(data.reply, "agent");
+        }catch(error){
+          console.error("Error:",error)
+          appendMessage("Sorry, Something went wrong","agent")
+
+        }finally{
+          clearTimeout(typingTimeout);
+          hideTyping();
+          input.disabled = false ;
+          input.focus();
+        }
+
+
+
     }
       // send message on enter key
       document.getElementById("chat-input").addEventListener("keydown", function(e){

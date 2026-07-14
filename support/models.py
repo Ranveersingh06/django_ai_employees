@@ -5,12 +5,12 @@ from orders.models import Order
 # Create your models here.
 class Conversation(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="conversation")
-    orders = models.ForeignKey(Order, on_delete=models.CASCADE, related_name= "conversation")
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name= "conversation")
     created_at = models.DateTimeField(auto_now_add=True)
 
 
     def __str__(self):
-        return f"Conversation {self.id}--{self.user.username}-- /order {self.orders.id}"
+        return f"Conversation {self.id}--{self.user.username}-- /order {self.order.id}"
     
 
 class Message(models.Model):
@@ -18,7 +18,7 @@ class Message(models.Model):
         ("user","User"),
         ("agent","Agent")
     ]
-    conversation = models.ForeignKey(Conversation, on_delete=models.CASCADE, related_name="conversation")
+    conversation = models.ForeignKey(Conversation, on_delete=models.CASCADE, related_name="messages")
     role = models.CharField(max_length=20 ,choices=ROLE_CHOICES) 
     content = models.TextField()
     created_at = models.DateTimeField(auto_now_add=True)

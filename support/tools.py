@@ -9,7 +9,7 @@ def get_order_details(order_id):
         return{
             "order_id":order.id,
             "product_name":order.product_name,
-            "amount":order.amount,
+            "amount":float(order.amount),
             "status":order.status,
             "carrier":order.carrier,
             "tracking_number":order.tracking_number,
