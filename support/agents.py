@@ -1,6 +1,6 @@
 from google import genai
 from django.conf import settings
-from .tools import get_order_details,get_refund_history,check_delivery_status,get_customer_risk_profile
+from .tools import get_order_details,get_refund_history,check_delivery_status,get_customer_risk_profile, search_knowledge_base
 from .models import Conversation, Message, AgentLog
 from google.genai import types
 
@@ -168,6 +168,22 @@ GEMINI_SUPPORT_TOOLS = [
                 }
             ),
 
+
+            types.FunctionDeclaration(
+                name="search_knowledge_base",
+                description="Search CoolBreeze AC company documents including refund policy, warranty policy, and product FAQs. Use this when customer asks about company policies, warranty coverage, warranty claims, refund eligibility, or any general product information that requires accurate company documentation.",
+                parameters={
+                    "type": "OBJECT",
+                    "properties": {
+                        "query": {
+                            "type": "STRING",
+                            "description": "The search query to find relevant information from company documents. Be specific — for example 'refund eligibility within 30 days' instead of just 'refund'."
+                        }
+                    },
+                    "required": ["query"]
+                }
+            ),
+
         ]
     )
 ]
@@ -246,6 +262,10 @@ def execute_tool(tool_name, tool_input, conversation_id):
     
     if tool_name == 'get_customer_risk_profile':
         return get_customer_risk_profile(tool_input['user_id'])
+    
+
+    if tool_name == "search_knowledge_base":
+        return search_knowledge_base(tool_input["query"])
 
 
 
